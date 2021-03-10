@@ -1,0 +1,335 @@
+---
+title: "STA223_project2_final"
+author: "YL"
+date: "3/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
+library(chron)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(fda)
+library(tidyr)
+library(fdapace)
+library(plotly)
+```
+
+```{r}
+# load data
+pm2.5 <- read.csv("PRSA_data_2010.1.1-2014.12.31.csv")
+# create a date variable
+date = as.Date(dates(with(pm2.5, paste(year,month,day,sep = '-')), format = 'y-m-d')) 
+pm2.5$date = date
+pm2.5 = pm2.5[,c(1:5,14,6:13)]
+# daily average
+dailyavg = pm2.5 %>% group_by(year,month,day,date) %>% summarize(pm2.5 = mean(pm2.5,na.rm = TRUE), DEWP = mean(DEWP),TEMP = mean(TEMP),PRES = mean(PRES), cbwd = names(which.max(table(cbwd))), Iws = mean(Iws), Is = mean(Is), Ir = mean(Ir), .groups = "keep")
+#remove 2012-02-29
+dailyavg <-  dailyavg[which(dailyavg$date!="2012-02-29"),]
+dailyavg_pm2.5 <- dailyavg[!is.na(dailyavg$pm2.5),]
+```
+
+
+```{r seasonal subsets}
+# index of days
+full_date_range = seq(as.Date("2010-01-01"),as.Date("2014-12-31"),by="days")
+full_date_range=full_date_range[-which(full_date_range=="2012-02-29")]
+index = as.numeric(c(rep(1:365,2),1:365,rep(1:365,2)))
+dailyavg_pm2.5$index = index[full_date_range %in% dailyavg_pm2.5$date]
+
+#winter
+winter<-dailyavg_pm2.5[which(dailyavg_pm2.5$month==12|dailyavg_pm2.5$month==1|dailyavg_pm2.5$month==2),]
+#spring
+spring<-dailyavg_pm2.5[which(dailyavg_pm2.5$month==3|dailyavg_pm2.5$month==4|dailyavg_pm2.5$month==5),]
+#summer
+summer<-dailyavg_pm2.5[which(dailyavg_pm2.5$month==6|dailyavg_pm2.5$month==7|dailyavg_pm2.5$month==8),]
+#fall
+fall<-dailyavg_pm2.5[which(dailyavg_pm2.5$month==9|dailyavg_pm2.5$month==10|dailyavg_pm2.5$month==11),] 
+
+#winter
+full_winter_range = c(seq(as.Date("2010-01-01"),as.Date("2010-02-28"),by="days"),seq(as.Date("2010-12-01"),as.Date("2011-02-28"),by="days"),seq(as.Date("2011-12-01"),as.Date("2012-02-28"),by="days"),seq(as.Date("2012-12-01"),as.Date("2013-02-28"),by="days"),seq(as.Date("2013-12-01"),as.Date("2014-02-28"),by="days"),seq(as.Date("2014-12-01"),as.Date("2014-12-31"),by="days"))
+index.winter = c(32:90,rep(c(1:90),4),1:31)
+winter$index = index.winter[full_winter_range %in% winter$date]
+
+winter10<-winter[which(winter$date>="2010-01-01" & winter$date<="2010-02-28"),]
+winter11<-winter[which(winter$date>="2010-12-01" & winter$date<="2011-02-28"),]
+winter12<-winter[which(winter$date>="2011-12-01" & winter$date<="2012-02-29"),]
+winter13<-winter[which(winter$date>="2012-12-01" & winter$date<="2013-02-28"),]
+winter14<-winter[which(winter$date>="2013-12-01" & winter$date<="2014-02-28"),]
+
+spring10<-spring[which(spring$date>="2010-03-01" & spring$date<="2010-05-31"),]
+spring11<-spring[which(spring$date>="2011-03-01" & spring$date<="2011-05-31"),]
+spring12<-spring[which(spring$date>="2012-03-01" & spring$date<="2012-05-31"),]
+spring13<-spring[which(spring$date>="2013-03-01" & spring$date<="2013-05-31"),]
+spring14<-spring[which(spring$date>="2014-03-01" & spring$date<="2014-05-31"),]
+
+summer10<-summer[which(summer$date>="2010-06-01" & summer$date<="2010-08-31"),]
+summer11<-summer[which(summer$date>="2011-06-01" & summer$date<="2011-08-31"),]
+summer12<-summer[which(summer$date>="2012-06-01" & summer$date<="2012-08-31"),]
+summer13<-summer[which(summer$date>="2013-06-01" & summer$date<="2013-08-31"),]
+summer14<-summer[which(summer$date>="2014-06-01" & summer$date<="2014-08-31"),]
+
+fall10<-fall[which(fall$date>="2010-09-01" & fall$date<="2010-11-30"),]
+fall11<-fall[which(fall$date>="2011-09-01" & fall$date<="2011-11-30"),]
+fall12<-fall[which(fall$date>="2012-09-01" & fall$date<="2012-11-30"),]
+fall13<-fall[which(fall$date>="2013-09-01" & fall$date<="2013-11-30"),]
+fall14<-fall[which(fall$date>="2014-09-01" & fall$date<="2014-11-30"),]
+```
+
+```{r smooth seasonal PM2.5 with fourier basis}
+# create fourier basis
+nbasis <-7
+seasonrange <- c(0,92)
+#fdobj
+seasonbasis <- create.fourier.basis(seasonrange, nbasis)
+# Lfdobj
+harmaccelLfd <- vec2Lfd(c(0,(2*pi/92)^2,0), seasonrange)
+# choose lambda using GCV
+# list of y 
+Y_ly = list(winter11$pm2.5,winter12$pm2.5,winter13$pm2.5,winter14$pm2.5,spring10$pm2.5,spring11$pm2.5,spring12$pm2.5,spring13$pm2.5,spring14$pm2.5,summer10$pm2.5,summer11$pm2.5,summer12$pm2.5,summer13$pm2.5,summer14$pm2.5,fall10$pm2.5,fall11$pm2.5,fall12$pm2.5,fall13$pm2.5,fall14$pm2.5)
+# list of argument values
+Y_lt = list(winter11$index,winter12$index,winter13$index,winter14$index,spring10$index-59,spring11$index-59,spring12$index-59,spring13$index-59,spring14$index-59,summer10$index-151,summer11$index-151,summer12$index-151,summer13$index-151,summer14$index-151,fall10$index-243,fall11$index-243,fall12$index-243,fall13$index-243,fall14$index-243)
+
+# lambda sweep
+lnlambda = seq(5,15, by = 0.5)
+templambda <- exp(lnlambda)
+gcv_pm2.5_season = matrix(0,19,length(templambda))
+
+for (k in 1:length(templambda)) {
+  # fdpar(for roughness penalty)
+  tempfdPar  <- fdPar(fdobj=seasonbasis, Lfdobj=harmaccelLfd,
+                  lambda=templambda[k])
+  for (i in 1:19) {
+    # smooth the data
+    smooth <- smooth.basis(Y_lt[[i]], Y_ly[[i]], tempfdPar)
+    # gcv of each curve
+    gcv_pm2.5_season[i,k] = smooth$gcv
+  }
+}
+
+gcv_sum_pm2.5_season = colSums(gcv_pm2.5_season)
+plot(x = lnlambda, gcv_sum_pm2.5_season,type="l",xlab = "log(k)",ylab ="Sum of GCV", main = "PM 2.5")
+
+# Choose lambda: insepct subjectively
+#####lambda = argmin(gcv)
+lambda_min = exp(10)
+tempfdPar  <- fdPar(fdobj=seasonbasis, Lfdobj=harmaccelLfd,
+                  lambda=lambda_min)
+# curve for functional observation
+pm2.5_season_smooth = list()
+par(mfrow=c(2,2))
+for (i in 1:19) {
+  pm2.5_mingcv <- smooth.basis(Y_lt[[i]], Y_ly[[i]], tempfdPar)
+  pm2.5_season_smooth[[i]] = pm2.5_mingcv 
+  plotfit.fd(Y_ly[[i]],Y_lt[[i]],pm2.5_mingcv$fd,cex=0.4,nfine = 201)
+}
+# generate dense obs for pca
+fourier_season_pm2.5 = list(Ly = list(),Lt=list())
+for (i in 1:19){
+  fourier_season_pm2.5$Ly[[i]] <- eval.fd(1:90,pm2.5_season_smooth[[i]]$fd)
+}
+fourier_season_pm2.5$Lt <- rep(list(1:90),19)
+```
+
+```{r smooth seasonal lws using fourier}
+# create fourier basis
+nbasis <-7
+seasonrange <- c(0,92)
+#fdobj
+seasonbasis <- create.fourier.basis(seasonrange, nbasis)
+# Lfdobj
+harmaccelLfd <- vec2Lfd(c(0,(2*pi/92)^2,0), seasonrange)
+# choose lambda using GCV
+# list of y 
+X_ly = list(winter11$Iws,winter12$Iws,winter13$Iws,winter14$Iws,spring10$Iws,spring11$Iws,spring12$Iws,spring13$Iws,spring14$Iws,summer10$Iws,summer11$Iws,summer12$Iws,summer13$Iws,summer14$Iws,fall10$Iws,fall11$Iws,fall12$Iws,fall13$Iws,fall14$Iws)
+# list of argument values
+X_lt = list(winter11$index,winter12$index,winter13$index,winter14$index,spring10$index-59,spring11$index-59,spring12$index-59,spring13$index-59,spring14$index-59,summer10$index-151,summer11$index-151,summer12$index-151,summer13$index-151,summer14$index-151,fall10$index-243,fall11$index-243,fall12$index-243,fall13$index-243,fall14$index-243)
+
+# lambda sweep
+lnlambda = seq(2,12, by = 0.5)
+templambda <- exp(lnlambda)
+gcv_Iws_season = matrix(0,19,length(templambda))
+
+for (k in 1:length(templambda)) {
+  # fdpar(for roughness penalty)
+  tempfdPar  <- fdPar(fdobj=seasonbasis, Lfdobj=harmaccelLfd,
+                  lambda=templambda[k])
+  for (i in 1:19) {
+    # smooth the data
+    smooth <- smooth.basis(Y_lt[[i]], Y_ly[[i]], tempfdPar)
+    # gcv of each curve
+    gcv_Iws_season[i,k] = smooth$gcv
+  }
+}
+
+gcv_sum_Iws_season = colSums(gcv_Iws_season)
+plot(x = lnlambda, gcv_sum_Iws_season,type="l", xlab="log(k)",ylab = "Sum of GCV", main = "Wind speed")
+
+# Choose lambda: insepct subjectively
+#####lambda = argmin(gcv)
+lambda_min = exp(10)
+tempfdPar  <- fdPar(fdobj=seasonbasis, Lfdobj=harmaccelLfd,
+                  lambda=lambda_min)
+# curve for functional observation
+Iws_season_smooth = list()
+par(mfrow=c(2,2))
+for (i in 1:19) {
+  Iws_mingcv <- smooth.basis(X_lt[[i]], X_ly[[i]], tempfdPar)
+  Iws_season_smooth[[i]] = Iws_mingcv 
+  plotfit.fd(X_ly[[i]],X_lt[[i]],Iws_mingcv$fd,cex=0.4,nfine = 201)
+}
+# generate dense obs for pca
+fourier_season_Iws = list(Ly = list(),Lt=list())
+for (i in 1:19){
+  fourier_season_Iws$Ly[[i]] <- eval.fd(1:90,Iws_season_smooth[[i]]$fd)
+}
+fourier_season_Iws$Lt <- rep(list(1:90),19)
+```
+
+```{r fpca for seasonal pm2.5}
+pm2.5_pca2 <- FPCA(fourier_season_pm2.5$Ly,fourier_season_pm2.5$Lt, list(dataType = 'Dense', plot=TRUE))
+pm2.5_pca2$cumFVE
+plot(pm2.5_pca2)
+# mean curve and 95% CI band
+pm2.5_mean_curve = pm2.5_pca2$mu
+se_pm2.5 = sqrt(diag(pm2.5_pca2$fittedCov))
+alpha=0.05
+cval = qnorm(1-alpha/2)
+pm2.5_cvgupper = pm2.5_mean_curve + cval*se_pm2.5
+pm2.5_cvglower = pm2.5_mean_curve - cval*se_pm2.5
+
+plot(pm2.5_pca2$workGrid,pm2.5_mean_curve, type = "l",col=1,xlab = "Days in season", ylab = "PM 2.5", ylim = c(min(pm2.5_cvglower),max(pm2.5_cvgupper)))
+points(pm2.5_pca2$workGrid, pm2.5_cvglower, type = "l", col=4, lty=2)
+points(pm2.5_pca2$workGrid, pm2.5_cvgupper, type = "l", col=4, lty=2)
+# Path plots
+par(mfrow = c(2,2))
+CreatePathPlot(pm2.5_pca2,subset = 1:4,showObs = FALSE, showMean = TRUE)
+CreatePathPlot(pm2.5_pca2,subset = 5:9,showObs = FALSE, showMean = TRUE)
+CreatePathPlot(pm2.5_pca2,subset = 10:14,showObs = FALSE, showMean = TRUE)
+CreatePathPlot(pm2.5_pca2,subset = 15:19,showObs = FALSE, showMean = TRUE)
+# function scores
+pm2.5_pca2_score = as.data.frame(pm2.5_pca2$xiEst)
+colnames(pm2.5_pca2_score) <-  c("PC1","PC2","PC3","PC4","PC5","PC6")
+# season lable
+pm2.5_pca2_score$season = NA
+pm2.5_pca2_score$season[1:4] = "Winter"
+pm2.5_pca2_score$season[5:9] = "Spring"
+pm2.5_pca2_score$season[10:14] = "Summer"
+pm2.5_pca2_score$season[15:19] = "Fall"
+# score plots
+ggplot(pm2.5_pca2_score,aes(x=PC1,y=PC2,color=season))+geom_point()+
+  labs(x=paste("PC1",round(pm2.5_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC2",round(pm2.5_pca2$cumFVE[2]-pm2.5_pca2$cumFVE[1],digits = 2), sep=':'))
+ggplot(pm2.5_pca2_score,aes(x=PC1,y=PC3,color=season))+geom_point()+
+  labs(x=paste("PC1",round(pm2.5_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC3",round(pm2.5_pca2$cumFVE[3]-pm2.5_pca2$cumFVE[2],digits = 2), sep=':'))
+ggplot(pm2.5_pca2_score,aes(x=PC2,y=PC3,color=season))+geom_point()+
+  labs(x=paste("PC2",round(pm2.5_pca2$cumFVE[2]-pm2.5_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC3",round(pm2.5_pca2$cumFVE[3]-pm2.5_pca2$cumFVE[2],digits = 2), sep=':'))
+# scree plots
+CreateScreePlot(pm2.5_pca2)
+# fitted covariance 
+cov_fitted2<- plot_ly(x = pm2.5_pca2$workGrid, y=pm2.5_pca2$workGrid, z=pm2.5_pca2$fittedCov)
+cov_fitted2<-cov_fitted2 %>% add_surface() %>% layout(
+  scene = list(
+    xaxis = list(title = "Days in seasons"),
+    yaxis = list(title = "Days in seasons"),
+    zaxis = list(title = "Fitted covariance")
+  )
+)
+cov_fitted2
+```
+
+```{r fpca for Iws}
+Iws_pca2 <- FPCA(fourier_season_Iws$Ly,fourier_season_Iws$Lt, list(dataType = 'Dense', plot=TRUE))
+Iws_pca2$cumFVE
+plot(Iws_pca2)
+# mean curve and 95% CI band
+Iws_mean_curve = Iws_pca2$mu
+se_Iws = sqrt(diag(Iws_pca2$fittedCov))
+alpha=0.05
+cval = qnorm(1-alpha/2)
+Iws_cvgupper =Iws_mean_curve + cval*se_Iws
+Iws_cvglower = Iws_mean_curve - cval*se_Iws
+
+plot(Iws_pca2$workGrid,Iws_mean_curve, type = "l",col=1,xlab = "Days in season", ylab = "Wind speed", ylim = c(min(Iws_cvglower),max(Iws_cvgupper)))
+points(Iws_pca2$workGrid, Iws_cvglower, type = "l", col=4, lty=2)
+points(Iws_pca2$workGrid, Iws_cvgupper, type = "l", col=4, lty=2)
+# Path plots
+par(mfrow = c(2,2))
+CreatePathPlot(Iws_pca2,subset = 1:4,showObs = FALSE, showMean = TRUE)
+CreatePathPlot(Iws_pca2,subset = 5:9,showObs = FALSE, showMean = TRUE)
+CreatePathPlot(Iws_pca2,subset = 10:14,showObs = FALSE, showMean = TRUE, ylim=c(5,30))
+CreatePathPlot(Iws_pca2,subset = 15:19,showObs = FALSE, showMean = TRUE)
+# function scores
+Iws_pca2_score = as.data.frame(Iws_pca2$xiEst)
+colnames(Iws_pca2_score) <-  c("PC1","PC2","PC3","PC4","PC5","PC6")
+# season lable
+Iws_pca2_score$season = NA
+Iws_pca2_score$season[1:4] = "Winter"
+Iws_pca2_score$season[5:9] = "Spring"
+Iws_pca2_score$season[10:14] = "Summer"
+Iws_pca2_score$season[15:19] = "Fall"
+# score plots
+ggplot(Iws_pca2_score,aes(x=PC1,y=PC2,color=season))+geom_point()+
+  labs(x=paste("PC1",round(Iws_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC2",round(Iws_pca2$cumFVE[2]-Iws_pca2$cumFVE[1],digits = 2), sep=':'))
+ggplot(Iws_pca2_score,aes(x=PC1,y=PC3,color=season))+geom_point()+
+  labs(x=paste("PC1",round(Iws_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC3",round(Iws_pca2$cumFVE[3]-Iws_pca2$cumFVE[2],digits = 2), sep=':'))
+ggplot(Iws_pca2_score,aes(x=PC2,y=PC3,color=season))+geom_point()+
+  labs(x=paste("PC2",round(Iws_pca2$cumFVE[2]-Iws_pca2$cumFVE[1],digits = 2),sep=':'), y=paste("PC3",round(Iws_pca2$cumFVE[3]-Iws_pca2$cumFVE[2],digits = 2), sep=':'))
+# scree plots
+CreateScreePlot(Iws_pca2)
+```
+
+```{r flr}
+#### Y_PC1 on X_PC1
+Y1X1 <- lm(pm2.5_pca2_score$PC1~Iws_pca2_score$PC1)
+summary(Y1X1)
+# plot
+plot(Iws_pca2_score$PC1,pm2.5_pca2_score$PC1, xlab = "Predictor PC1", ylab = "Response PC1", type="p",cex=0.5)
+abline(Y1X1$coefficients[1],Y1X1$coefficients[2],col="red")
+
+#### Y_PC1 on X_PC2
+Y1X2 <- lm(pm2.5_pca2_score$PC1~Iws_pca2_score$PC2)
+summary(Y1X2)
+# plot
+plot(Iws_pca2_score$PC2,pm2.5_pca2_score$PC1, xlab = "Predictor PC2", ylab = "Response PC1", type="p",cex=0.5)
+abline(Y1X2$coefficients[1],Y1X2$coefficients[2],col="red")
+
+#### Y_PC2 on X_PC1
+Y2X1 <- lm(pm2.5_pca2_score$PC2~Iws_pca2_score$PC1)
+summary(Y2X1)
+# plot
+plot(Iws_pca2_score$PC1,pm2.5_pca2_score$PC2, xlab = "Predictor PC1", ylab = "Response PC2", type="p",cex=0.5)
+abline(Y2X1$coefficients[1],Y2X1$coefficients[2],col="red")
+
+#### Y_PC2 on X_PC2
+Y2X2 <- lm(pm2.5_pca2_score$PC2~Iws_pca2_score$PC2)
+summary(Y2X2)
+# plot
+plot(Iws_pca2_score$PC2,pm2.5_pca2_score$PC2, xlab = "Predictor PC2", ylab = "Response PC2", type="p",cex=0.5)
+abline(Y2X2$coefficients[1],Y2X2$coefficients[2],col="red")
+
+par(mfrow=c(2,2))
+plot(Y1X1,which=1)
+plot(Y1X2,which=1)
+plot(Y2X1,which=1)
+plot(Y2X2,which=1)
+
+#### beta(s,t): coefficient of function-functoin regression
+beta_st = Y1X1$coefficients[2]*pm2.5_pca2$phi[,1] %o% Iws_pca2$phi[,1] +
+  Y1X2$coefficients[2]*pm2.5_pca2$phi[,1] %o% Iws_pca2$phi[,2] +
+  Y2X1$coefficients[2]*pm2.5_pca2$phi[,2] %o% Iws_pca2$phi[,1] +
+  Y2X2$coefficients[2]*pm2.5_pca2$phi[,2]%o% Iws_pca2$phi[,2]
+
+fig<- plot_ly(x = Iws_pca2$workGrid, y=pm2.5_pca2$workGrid, z=beta_st)
+fig<-fig %>% add_surface() %>% layout(
+  scene = list(
+    xaxis = list(title = "Predictor: Wind speed"),
+    yaxis = list(title = "Response: PM 2.5"),
+    zaxis = list(title = "Regression coefficients")
+  )
+)
+fig
+```
+
